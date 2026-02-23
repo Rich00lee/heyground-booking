@@ -105,6 +105,14 @@ def check_credit(booking_data, token):
     return resp.json()
 
 
+def cancel_reservation(reservation_code, location, token):
+    """예약 취소"""
+    url = f"{API_BASE}/reservations/{reservation_code}?location={location}"
+    resp = requests.delete(url, headers=get_headers(token))
+    resp.raise_for_status()
+    return resp.json()
+
+
 def create_reservation(booking_data, token):
     """예약 생성"""
     url = f"{API_BASE}/reservations"
@@ -267,6 +275,25 @@ def cmd_my(config):
               f"({r.get('stat_nm', r.get('stat', ''))})")
 
 
+def cmd_cancel(args, config):
+    """예약 취소"""
+    token = config["access_token"]
+    location = config.get("location", "seoulsoop")
+    code = args.get("code")
+
+    if not code:
+        print("예약 코드가 필요합니다: --code {예약코드}")
+        print("내 예약 목록에서 코드를 확인하세요: python3 heyground.py my")
+        sys.exit(1)
+
+    result = cancel_reservation(code, location, token)
+    print(f"예약 취소 완료!")
+    print(f"  예약코드: {result['cd']}")
+    print(f"  회의실: {result['pblspc_nm']}")
+    print(f"  상태: {result.get('stat_nm', result.get('stat', ''))}")
+    print(f"  반환 크레딧: {result.get('crt_count', 0)}")
+
+
 def cmd_credit(config):
     """잔여 크레딧 확인"""
     token = config["access_token"]
@@ -280,6 +307,7 @@ def main():
         print("  python3 heyground.py book --date 20260305 --start 1400 --end 1600 --capacity 6")
         print("  python3 heyground.py book --date 20260305 --start 1400 --end 1600 --room M7-6A")
         print("  python3 heyground.py available --date 20260305 --start 1400 --end 1600")
+        print("  python3 heyground.py cancel --code K2602230081")
         print("  python3 heyground.py my")
         print("  python3 heyground.py credit")
         sys.exit(1)
@@ -308,6 +336,8 @@ def main():
         cmd_available(args, config)
     elif command == "my":
         cmd_my(config)
+    elif command == "cancel":
+        cmd_cancel(args, config)
     elif command == "credit":
         cmd_credit(config)
     else:
