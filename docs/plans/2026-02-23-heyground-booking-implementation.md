@@ -29,7 +29,7 @@ Run: `mkdir -p ~/.config/heyground`
 {
   "access_token": "(브라우저 Local Storage에서 복사)",
   "refresh_token": "(브라우저 Local Storage에서 복사)",
-  "user_name": "rich.lee@liveklass.com",
+  "user_name": "your.email@company.com",
   "location": "seoulsoop"
 }
 ```
