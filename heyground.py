@@ -121,7 +121,7 @@ def create_reservation(booking_data, token):
     return resp.json()
 
 
-def find_available_rooms(date_str, start_time, end_time, capacity, location, token):
+def find_available_rooms(date_str, start_time, end_time, capacity, location, token, preferred_floor="07"):
     """빈 회의실 찾기
 
     Args:
@@ -131,6 +131,7 @@ def find_available_rooms(date_str, start_time, end_time, capacity, location, tok
         capacity: 필요 인원 수
         location: 지점 코드
         token: access_token
+        preferred_floor: 우선 배정할 층 (기본값: "07")
     """
     reservations = get_reservations(date_str, location, token)
 
@@ -153,8 +154,8 @@ def find_available_rooms(date_str, start_time, end_time, capacity, location, tok
         if info["capacity"] >= capacity:
             available.append({"code": code, **info})
 
-    # 용량이 작은 것 우선 (딱 맞는 방 추천)
-    available.sort(key=lambda x: (x["capacity"], x["floor"]))
+    # 정렬: 인원 → 선호 층 우선(0) / 나머지(1) → 층수
+    available.sort(key=lambda x: (x["capacity"], 0 if x["floor"] == preferred_floor else 1, x["floor"]))
     return available
 
 
@@ -205,13 +206,17 @@ def cmd_book(args, config):
 
     date_dash = f"{date_ymd[:4]}-{date_ymd[4:6]}-{date_ymd[6:]}"
 
+    floor = args.get("floor")
+    # --floor 값을 2자리 문자열로 정규화 (7 → "07")
+    preferred_floor = f"{int(floor):02d}" if floor else "07"
+
     if room_input:
         room_code = resolve_room_code(room_input)
         if not room_code:
             print(f"방을 찾을 수 없습니다: {room_input}")
             sys.exit(1)
     else:
-        available = find_available_rooms(date_dash, start, end, capacity, location, token)
+        available = find_available_rooms(date_dash, start, end, capacity, location, token, preferred_floor)
         if not available:
             print(f"{date_dash} {start}~{end} 시간대에 {capacity}인 이상 빈 방이 없습니다.")
             sys.exit(1)
@@ -244,8 +249,11 @@ def cmd_available(args, config):
     end = args.get("end", "1800")
     capacity = int(args.get("capacity", 1))
 
+    floor = args.get("floor")
+    preferred_floor = f"{int(floor):02d}" if floor else "07"
+
     date_dash = f"{date_ymd[:4]}-{date_ymd[4:6]}-{date_ymd[6:]}"
-    available = find_available_rooms(date_dash, start, end, capacity, location, token)
+    available = find_available_rooms(date_dash, start, end, capacity, location, token, preferred_floor)
 
     if not available:
         print(f"{date_dash} {start[:2]}:{start[2:]}~{end[:2]}:{end[2:]} 시간대에 빈 방이 없습니다.")
