@@ -90,6 +90,18 @@ def is_already_booked(my_reservations, date, start, end):
     return False
 
 
+def send_error_alert(config, message):
+    """Slack으로 에러 알림 발송"""
+    webhook_url = config.get("slack_webhook_url")
+    if not webhook_url:
+        return
+    payload = {"text": f":rotating_light: *회의실 자동예약 오류*\n{message}"}
+    try:
+        requests.post(webhook_url, json=payload, timeout=10)
+    except Exception:
+        pass
+
+
 def main():
     dry_run = "--dry" in sys.argv
 
@@ -103,7 +115,15 @@ def main():
     location = config.get("location", "seoulsoop")
 
     # 내 기존 예약 조회
-    my_reservations = get_my_reservations(location, token)
+    try:
+        my_reservations = get_my_reservations(location, token)
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code in (401, 403):
+            msg = "access_token 만료 — 브라우저 헤이그라운드 로그인 후 Local Storage에서 토큰 재발급 필요"
+            log(f"ERROR: {msg}")
+            send_error_alert(config, msg)
+            return
+        raise
     log(f"기존 예약 {len(my_reservations)}건 확인")
 
     # 예약 대상 날짜 계산
