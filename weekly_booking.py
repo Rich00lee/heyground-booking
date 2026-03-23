@@ -12,6 +12,8 @@
 import json
 import sys
 import os
+import socket
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -19,6 +21,11 @@ try:
     import requests
 except ImportError:
     pass
+
+# 네트워크 연결 대기 설정
+NETWORK_CHECK_HOST = "api.heyground.com"
+NETWORK_MAX_RETRIES = 5
+NETWORK_RETRY_INTERVAL = 30  # 초
 
 # 같은 디렉토리의 heyground.py에서 함수 임포트
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -54,6 +61,23 @@ def log(msg):
     print(line)
     with open(LOG_PATH, "a") as f:
         f.write(line + "\n")
+
+
+def wait_for_network():
+    """네트워크 연결될 때까지 대기 (Mac 잠자기 복귀 대응)
+
+    Returns:
+        True: 연결 성공, False: 최대 재시도 초과
+    """
+    for attempt in range(1, NETWORK_MAX_RETRIES + 1):
+        try:
+            socket.getaddrinfo(NETWORK_CHECK_HOST, 443)
+            return True
+        except socket.gaierror:
+            log(f"  네트워크 대기 중... ({attempt}/{NETWORK_MAX_RETRIES})")
+            if attempt < NETWORK_MAX_RETRIES:
+                time.sleep(NETWORK_RETRY_INTERVAL)
+    return False
 
 
 def get_target_dates():
@@ -109,6 +133,12 @@ def main():
         log("=== 테스트 모드 (예약 없이 결과만 출력) ===")
     else:
         log("=== 정기 회의실 자동 예약 시작 ===")
+
+    # 네트워크 연결 확인 (Mac 잠자기 복귀 시 DNS 실패 방지)
+    if not wait_for_network():
+        msg = f"네트워크 연결 실패 — {NETWORK_MAX_RETRIES}회 재시도 후 포기"
+        log(f"ERROR: {msg}")
+        return
 
     config = load_token()
     token = config["access_token"]
