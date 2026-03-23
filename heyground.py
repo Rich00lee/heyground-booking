@@ -4,6 +4,8 @@
 import json
 import sys
 import os
+import base64
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -15,7 +17,10 @@ except ImportError:
 
 # === 설정 ===
 API_BASE = "https://api.heyground.com/api"
+OAUTH_URL = "https://api.heyground.com/oauth/token"
 TOKEN_PATH = Path.home() / ".config" / "heyground" / "token.json"
+BASIC_AUTH = "aGV5Z3JvdW5kLXdlYjpmb28="  # heyground-web:foo
+TOKEN_REFRESH_MARGIN = 86400  # 만료 1일 전부터 갱신
 
 # === 회의실 데이터 (서울숲점) ===
 ROOMS = {
@@ -52,14 +57,62 @@ NAME_TO_CODE = {v["name"]: k for k, v in ROOMS.items()}
 NAME_TO_CODE_LOWER = {v["name"].lower().replace("-", ""): k for k, v in ROOMS.items()}
 
 
+def _decode_jwt_exp(token):
+    """JWT에서 만료 시간(exp) 추출"""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        return data.get("exp", 0)
+    except Exception:
+        return 0
+
+
+def _refresh_tokens(config):
+    """refresh_token으로 새 access_token/refresh_token 발급"""
+    resp = requests.post(
+        OAUTH_URL,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {BASIC_AUTH}",
+        },
+        data=f"grant_type=refresh_token&refresh_token={config['refresh_token']}",
+        timeout=10,
+    )
+    resp.raise_for_status()
+    new_tokens = resp.json()
+
+    config["access_token"] = new_tokens["access_token"]
+    config["refresh_token"] = new_tokens["refresh_token"]
+
+    with open(TOKEN_PATH, "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    return config
+
+
 def load_token():
-    """토큰 파일에서 설정 읽기"""
+    """토큰 파일에서 설정 읽기 + 만료 임박 시 자동 갱신"""
     if not TOKEN_PATH.exists():
         print(f"토큰 파일이 없습니다: {TOKEN_PATH}")
         print("브라우저 Local Storage에서 access_token을 복사해서 토큰 파일을 만들어주세요.")
         sys.exit(1)
     with open(TOKEN_PATH) as f:
-        return json.load(f)
+        config = json.load(f)
+
+    # access_token 만료 확인 + 자동 갱신
+    exp = _decode_jwt_exp(config["access_token"])
+    now = int(time.time())
+    if exp and exp - now < TOKEN_REFRESH_MARGIN:
+        try:
+            config = _refresh_tokens(config)
+        except Exception as e:
+            # 갱신 실패해도 기존 토큰이 아직 유효하면 계속 진행
+            if exp > now:
+                pass
+            else:
+                raise RuntimeError(f"토큰 만료 + 갱신 실패: {e}")
+
+    return config
 
 
 def get_headers(token):

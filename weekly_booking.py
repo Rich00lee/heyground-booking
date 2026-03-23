@@ -144,16 +144,25 @@ def main():
     token = config["access_token"]
     location = config.get("location", "seoulsoop")
 
-    # 내 기존 예약 조회
+    # 내 기존 예약 조회 (401 시 토큰 갱신 후 재시도)
     try:
         my_reservations = get_my_reservations(location, token)
     except requests.exceptions.HTTPError as e:
         if e.response is not None and e.response.status_code in (401, 403):
-            msg = "access_token 만료 — 브라우저 헤이그라운드 로그인 후 Local Storage에서 토큰 재발급 필요"
-            log(f"ERROR: {msg}")
-            send_error_alert(config, msg)
-            return
-        raise
+            log("토큰 만료 감지 — 자동 갱신 시도")
+            try:
+                from heyground import _refresh_tokens
+                config = _refresh_tokens(config)
+                token = config["access_token"]
+                my_reservations = get_my_reservations(location, token)
+                log("토큰 갱신 성공 — 예약 조회 재시도 완료")
+            except Exception as refresh_err:
+                msg = f"토큰 자동 갱신 실패: {refresh_err}"
+                log(f"ERROR: {msg}")
+                send_error_alert(config, msg)
+                return
+        else:
+            raise
     log(f"기존 예약 {len(my_reservations)}건 확인")
 
     # 예약 대상 날짜 계산

@@ -8,8 +8,9 @@
 - `README.md` — 사용법
 
 ## 인증
-- 토큰 위치: `~/.config/heyground/token.json` (access_token + slack_webhook_url)
-- refresh_token 갱신 로직 필요 (P1)
+- 토큰 위치: `~/.config/heyground/token.json` (access_token + refresh_token + slack_webhook_url)
+- **자동 갱신**: `load_token()` 호출 시 만료 1일 전이면 자동 refresh (OAuth2, client: heyground-web:foo)
+- weekly_booking.py에서 401 발생 시에도 자동 갱신 재시도
 
 ## 회의실
 - 서울숲점 기준, 4~10인실 매핑 완료
