@@ -17,8 +17,10 @@
 
 ## 자동화
 - `weekly_booking.py` — 정기 회의실 자동 예약 + Slack 리마인드
-  - crontab 매일 08:07 실행 (2주 앞까지 월/수 슬롯 자동 예약)
-  - **Mac 잠자기 대응**: `wait_for_network()` — DNS 연결 재시도 (최대 5회, 30초 간격)
+  - launchd 매일 08:07 실행 (2주 앞까지 월/수 슬롯 자동 예약)
+  - plist: `~/Library/LaunchAgents/com.liveklass.heyground-booking.plist`
+  - cron에서 전환 (3/25) — macOS 잠자기 시 cron 누락 문제 해결, launchd는 밀린 실행 보상
+  - **네트워크 대응**: `wait_for_network()` — DNS 연결 재시도 (최대 5회, 30초 간격)
   - 선호 방: M7-6C > M7-6B > M7-6A (7층 6인실)
   - 당일 예약 있으면 Slack `#사업팀-셀리더-2025`에 리마인드 발송
   - 테스트: `python3 weekly_booking.py --dry`
