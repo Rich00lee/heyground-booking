@@ -52,6 +52,20 @@ PREFERRED_FLOOR = "07"       # 7층
 PREFERRED_ROOMS = ["M7-6C", "M7-6B", "M7-6A"]  # 선호 순서 (7C > 7B > 7A)
 LOOKAHEAD_DAYS = 14          # 2주 뒤까지
 LOG_PATH = Path(__file__).parent / "weekly_booking.log"
+RUN_MARKER = Path(__file__).parent / ".last_run_date"
+
+
+def already_ran_today():
+    """오늘 이미 실행됐는지 확인 (RunAtLoad + StartCalendarInterval 중복 방지)"""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if RUN_MARKER.exists() and RUN_MARKER.read_text().strip() == today_str:
+        return True
+    return False
+
+
+def mark_today_run():
+    """오늘 실행 완료 마킹"""
+    RUN_MARKER.write_text(datetime.now().strftime("%Y-%m-%d"))
 
 
 def log(msg):
@@ -128,6 +142,11 @@ def send_error_alert(config, message):
 
 def main():
     dry_run = "--dry" in sys.argv
+
+    # 당일 중복 실행 방지 (RunAtLoad + StartCalendarInterval 동시 트리거 대응)
+    if not dry_run and already_ran_today():
+        log("오늘 이미 실행됨 — 중복 실행 방지로 스킵")
+        return
 
     if dry_run:
         log("=== 테스트 모드 (예약 없이 결과만 출력) ===")
@@ -235,6 +254,7 @@ def main():
     # 당일 회의실 예약 Slack 리마인드
     if not dry_run:
         send_today_reminder(my_reservations, config)
+        mark_today_run()
 
 
 def send_today_reminder(my_reservations, config):
