@@ -40,17 +40,47 @@ from heyground import (
 )
 
 # === 정기 회의 설정 ===
+# 요일: 0=월, 1=화, 2=수, 3=목, 4=금
+# reminder_webhook_key: token.json에 저장된 webhook URL 키 이름
 WEEKLY_SCHEDULE = [
-    # (요일 번호, 시작, 종료, 용도)
-    # 0=월, 1=화, 2=수, 3=목, 4=금
-    (0, "0930", "1030", "정기 회의"),   # 월요일 09:30~10:30
-    (2, "1100", "1200", "정기 회의"),   # 수요일 11:00~12:00
+    {
+        "weekday": 0, "start": "0930", "end": "1030",
+        "dtl": "정기 회의",
+        "preferred_rooms": ["M7-6C", "M7-6B", "M7-6A"],
+        "reminder_webhook_key": "slack_webhook_url",  # #사업팀-셀리더-2025
+    },
+    {
+        "weekday": 2, "start": "1100", "end": "1200",
+        "dtl": "정기 회의",
+        "preferred_rooms": ["M7-6C", "M7-6B", "M7-6A"],
+        "reminder_webhook_key": "slack_webhook_url",
+    },
+    # ax daily camp — 화/수/목/금 10:00~10:30, 7B 선호
+    *[
+        {
+            "weekday": wd, "start": "1000", "end": "1030",
+            "dtl": "ax daily camp",
+            "preferred_rooms": ["M7-6B", "M7-6C", "M7-6A"],
+            "reminder_webhook_key": "slack_webhook_url_ax_hero_camp",  # #ax-hero-camp
+        }
+        for wd in (1, 2, 3, 4)
+    ],
 ]
 
 PREFERRED_CAPACITY = 6       # 6인실
 PREFERRED_FLOOR = "07"       # 7층
-PREFERRED_ROOMS = ["M7-6C", "M7-6B", "M7-6A"]  # 선호 순서 (7C > 7B > 7A)
 LOOKAHEAD_DAYS = 14          # 2주 뒤까지
+
+# 휴일·휴가 블랙리스트 (dtl별 YYYY-MM-DD 제외 날짜)
+# 취소만 하면 재예약되니, 제외하려면 반드시 여기에 등록
+EXCLUDED_DATES = {
+    "ax daily camp": {
+        "2026-05-01",  # 근로자의 날
+        "2026-05-05",  # 어린이날
+        "2026-05-06",  # Rich 휴가
+        "2026-05-07",  # Rich 휴가
+    },
+}
 LOG_PATH = Path(__file__).parent / "weekly_booking.log"
 RUN_MARKER = Path(__file__).parent / ".last_run_date"
 
@@ -98,7 +128,7 @@ def get_target_dates():
     """오늘부터 2주 내 예약 대상 날짜 목록 반환
 
     Returns:
-        list of (date, start_time, end_time, dtl)
+        list of (date, schedule_entry)
     """
     today = datetime.now().date()
     targets = []
@@ -106,10 +136,16 @@ def get_target_dates():
     for day_offset in range(0, LOOKAHEAD_DAYS + 1):
         d = today + timedelta(days=day_offset)
         weekday = d.weekday()  # 0=월 ~ 6=일
+        date_iso = d.strftime("%Y-%m-%d")
 
-        for sched_weekday, start, end, dtl in WEEKLY_SCHEDULE:
-            if weekday == sched_weekday:
-                targets.append((d, start, end, dtl))
+        for entry in WEEKLY_SCHEDULE:
+            if weekday != entry["weekday"]:
+                continue
+            # 블랙리스트 (휴일·휴가) 체크
+            excluded = EXCLUDED_DATES.get(entry["dtl"], set())
+            if date_iso in excluded:
+                continue
+            targets.append((d, entry))
 
     return targets
 
@@ -192,8 +228,12 @@ def main():
     skipped = 0
     failed = 0
 
-    for date, start, end, dtl in targets:
-        date_label = f"{date.strftime('%Y-%m-%d')} ({['월','화','수','목','금','토','일'][date.weekday()]}) {start[:2]}:{start[2:]}~{end[:2]}:{end[2:]}"
+    for date, entry in targets:
+        start = entry["start"]
+        end = entry["end"]
+        dtl = entry["dtl"]
+        preferred_rooms = entry["preferred_rooms"]
+        date_label = f"{date.strftime('%Y-%m-%d')} ({['월','화','수','목','금','토','일'][date.weekday()]}) {start[:2]}:{start[2:]}~{end[:2]}:{end[2:]} [{dtl}]"
 
         # 중복 체크
         if is_already_booked(my_reservations, date, start, end):
@@ -220,10 +260,10 @@ def main():
             failed += 1
             continue
 
-        # 선호 방 우선 선택
+        # 선호 방 우선 선택 (스케줄별 preferred_rooms 사용)
         room = None
         available_names = {r["name"]: r for r in available}
-        for pref in PREFERRED_ROOMS:
+        for pref in preferred_rooms:
             if pref in available_names:
                 room = available_names[pref]
                 break
@@ -257,52 +297,70 @@ def main():
         mark_today_run()
 
 
-def send_today_reminder(my_reservations, config):
-    """오늘 예약된 회의실이 있으면 Slack으로 리마인드 발송"""
-    webhook_url = config.get("slack_webhook_url")
-    if not webhook_url:
-        log("Slack webhook URL 미설정 — 리마인드 생략")
-        return
+DEFAULT_WEBHOOK_KEY = "slack_webhook_url"  # 스케줄 매칭 실패 시 기본 채널
 
+
+def _match_schedule_entry(weekday, start, end):
+    """오늘 예약을 WEEKLY_SCHEDULE 엔트리와 매칭. 매칭 실패 시 None."""
+    for entry in WEEKLY_SCHEDULE:
+        if entry["weekday"] == weekday and entry["start"] == start and entry["end"] == end:
+            return entry
+    return None
+
+
+def send_today_reminder(my_reservations, config):
+    """오늘 예약된 회의실이 있으면 Slack으로 리마인드 발송 (채널별 분기)"""
     today = datetime.now().date()
     today_str = today.strftime("%Y%m%d")
+    weekday = today.weekday()
     weekday_names = ['월', '화', '수', '목', '금', '토', '일']
 
-    # 오늘 예약 필터링
-    today_bookings = []
+    # 오늘 예약 → webhook_key별 그룹핑
+    grouped: dict = {}
     for r in my_reservations:
-        if r["de_use"] == today_str:
-            s = r["time_use_start"]
-            e = r["time_use_end"]
-            room_name = r.get("pblspc_nm", "회의실")
-            today_bookings.append({
-                "time": f"{s[:2]}:{s[2:]}~{e[:2]}:{e[2:]}",
-                "room": room_name,
-                "code": r.get("cd", ""),
-            })
+        if r["de_use"] != today_str:
+            continue
+        s = r["time_use_start"]
+        e = r["time_use_end"]
+        room_name = r.get("pblspc_nm", "회의실")
 
-    if not today_bookings:
+        entry = _match_schedule_entry(weekday, s, e)
+        webhook_key = entry["reminder_webhook_key"] if entry else DEFAULT_WEBHOOK_KEY
+
+        grouped.setdefault(webhook_key, []).append({
+            "time": f"{s[:2]}:{s[2:]}~{e[:2]}:{e[2:]}",
+            "room": room_name,
+            "dtl": entry["dtl"] if entry else "회의",
+        })
+
+    if not grouped:
         log("오늘 예약 없음 — 리마인드 생략")
         return
 
-    # Slack 메시지 구성
-    date_label = f"{today.strftime('%m/%d')} ({weekday_names[today.weekday()]})"
-    lines = [f":calendar: *오늘의 회의실 예약 — {date_label}*", ""]
-    for b in today_bookings:
-        lines.append(f"• *{b['time']}*  :office:  {b['room']}")
-    lines.append("")
-    lines.append("_자동 리마인드 by 리치 비서_")
+    date_label = f"{today.strftime('%m/%d')} ({weekday_names[weekday]})"
 
-    payload = {"text": "\n".join(lines)}
+    # 그룹별 발송
+    for webhook_key, bookings in grouped.items():
+        webhook_url = config.get(webhook_key)
+        if not webhook_url:
+            log(f"Slack webhook 미설정 (키: {webhook_key}) — {len(bookings)}건 리마인드 생략")
+            continue
 
-    try:
-        resp = requests.post(webhook_url, json=payload, timeout=10)
-        if resp.status_code == 200:
-            log(f"Slack 리마인드 발송 완료 ({len(today_bookings)}건)")
-        else:
-            log(f"Slack 리마인드 실패: {resp.status_code} {resp.text}")
-    except Exception as e:
-        log(f"Slack 리마인드 오류: {e}")
+        lines = [f":calendar: *오늘의 회의실 예약 — {date_label}*", ""]
+        for b in bookings:
+            lines.append(f"• *{b['time']}*  :office:  {b['room']}")
+        lines.append("")
+        lines.append("_자동 리마인드 by 리치 비서_")
+        payload = {"text": "\n".join(lines)}
+
+        try:
+            resp = requests.post(webhook_url, json=payload, timeout=10)
+            if resp.status_code == 200:
+                log(f"Slack 리마인드 발송 완료 (키: {webhook_key}, {len(bookings)}건)")
+            else:
+                log(f"Slack 리마인드 실패 (키: {webhook_key}): {resp.status_code} {resp.text}")
+        except Exception as e:
+            log(f"Slack 리마인드 오류 (키: {webhook_key}): {e}")
 
 
 if __name__ == "__main__":
