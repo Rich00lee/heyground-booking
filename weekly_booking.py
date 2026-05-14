@@ -55,16 +55,6 @@ WEEKLY_SCHEDULE = [
         "preferred_rooms": ["M7-6C", "M7-6B", "M7-6A"],
         "reminder_webhook_key": "slack_webhook_url",
     },
-    # ax daily camp — 화/수/목/금 10:00~10:30, 7B 선호
-    *[
-        {
-            "weekday": wd, "start": "1000", "end": "1030",
-            "dtl": "ax daily camp",
-            "preferred_rooms": ["M7-6B", "M7-6C", "M7-6A"],
-            "reminder_webhook_key": "slack_webhook_url_ax_hero_camp",  # #ax-hero-camp
-        }
-        for wd in (1, 2, 3, 4)
-    ],
 ]
 
 PREFERRED_CAPACITY = 6       # 6인실
@@ -73,14 +63,7 @@ LOOKAHEAD_DAYS = 14          # 2주 뒤까지
 
 # 휴일·휴가 블랙리스트 (dtl별 YYYY-MM-DD 제외 날짜)
 # 취소만 하면 재예약되니, 제외하려면 반드시 여기에 등록
-EXCLUDED_DATES = {
-    "ax daily camp": {
-        "2026-05-01",  # 근로자의 날
-        "2026-05-05",  # 어린이날
-        "2026-05-06",  # Rich 휴가
-        "2026-05-07",  # Rich 휴가
-    },
-}
+EXCLUDED_DATES = {}
 LOG_PATH = Path(__file__).parent / "weekly_booking.log"
 RUN_MARKER = Path(__file__).parent / ".last_run_date"
 
